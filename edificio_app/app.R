@@ -12,7 +12,8 @@ library(RPostgres)
 library(ggplot2)
 library("scales")
 library(DT)
-library(bslib)
+library(shinyauthr)
+library(shinyjs)
 
 # --- CONEXIÓN BASE DE DATOS ---
 # Conexión local a PostgreSQL. En producción usar variables de entorno para la contraseña.
@@ -24,122 +25,40 @@ con <- dbConnect(RPostgres::Postgres(),
                  password = "texto232"
 )
 
+# --- USUARIOS Y ROLES ---
+usuarios <- data.frame(
+  user = c("conserje", "admin", "comite"),
+  password = c("conserje123", "admin123", "comite123"),
+  password_hash = sapply(c("conserje123", "admin123", "comite123"), sodium::password_store),
+  rol = c("conserje", "admin", "comite"),
+  stringsAsFactors = FALSE
+)
+
 # ============================================
 # INTERFAZ DE USUARIO (UI)
 # Define la estructura visual del dashboard
 # ============================================
 ui <- dashboardPage(
-  
-  # --- ENCABEZADO ---
-  dashboardHeader(title = "Gestión Edificio"),
-  
-  # --- MENÚ LATERAL ---
-  # Cada menuItem corresponde a una pestaña del dashboard
+  dashboardHeader(
+    title = "Gestión Edificio",
+    tags$li(class = "dropdown", shinyauthr::logoutUI("logout")),
+    # En la UI, en el header
+    tags$li(class = "dropdown",
+            actionButton("logout_btn", "Cerrar Sesión", 
+                         style = "margin-top: 8px; margin-right: 10px;")
+    ) 
+   ),
   dashboardSidebar(
-    sidebarMenu(
-      menuItem("Resumen",       tabName = "resumen",     icon = icon("home")),
-      menuItem("Gastos Comunes",tabName = "gastos",      icon = icon("dollar-sign")),
-      menuItem("Mantención",    tabName = "mantencion",  icon = icon("wrench")),
-      menuItem("Encomiendas",   tabName = "encomiendas", icon = icon("box"))
-    )
+    uiOutput("menu_sidebar")
   ),
-  
-  # --- CUERPO DEL DASHBOARD ---
   dashboardBody(
-    tabItems(
-      
-      # ==========================================
-      # PESTAÑA 1: RESUMEN GENERAL
-      # Muestra KPIs financieros, gráfico mensual
-      # y lista de trabajadores activos
-      # ==========================================
-      tabItem(tabName = "resumen",
-              h2("Resumen General"),
-              
-              # Fila de KPIs: ingresos, egresos y fondo de reserva
-              fluidRow(
-                valueBoxOutput("total_ingresos"),
-                valueBoxOutput("total_egresos"),
-                valueBoxOutput("fondo_reserva")
-              ),
-              
-              # Gráfico de barras (8/12 del ancho) + tabla trabajadores (4/12)
-              fluidRow(
-                column(8, box(width = 12, title = "Ingresos y Egresos",
-                              plotOutput("grafico_balance", height = "300px"))),
-                column(4, box(width = 12, title = "Trabajadores Activos",
-                              tableOutput("trabajadores")))
-              )
-      ),
-      
-      # ==========================================
-      # PESTAÑA 2: GASTOS COMUNES
-      # Permite filtrar por departamento, fecha
-      # y estado de pago (pagado/pendiente)
-      # ==========================================
-      tabItem(tabName = "gastos",
-              h2("Gastos Comunes"),
-              
-              # Filtros: departamento, fecha límite y estado de pago
-              fluidRow(
-                column(4, selectInput("filtro_depto",   "Departamento:", choices = c("Todos"))),
-                column(4, dateInput("filtro_fecha",     "Mes:", value = Sys.Date())),
-                column(4, selectInput("filtro_estado",  "Estado:", choices = c("Todos", "Pagados", "Pendientes")))
-              ),
-              
-              # Tabla de resultados (limitada a 12 registros)
-              fluidRow(
-                box(width = 12, tableOutput("gastos_comunes"))
-              )
-      ),
-      
-      # ==========================================
-      # PESTAÑA 3: MANTENCIÓN
-      # Buscador de trabajos realizados y lista
-      # de trabajos pendientes (desde VIEW)
-      # ==========================================
-      tabItem(tabName = "mantencion",
-              h2("Mantención"),
-              
-              # Buscador por descripción o tipo de mantención
-              fluidRow(
-                box(width = 12, title = "Buscar Trabajos Realizados",
-                    textInput("buscar_trabajo", "Buscar por descripción:"),
-                    tableOutput("trabajos_realizados")
-                )
-              ),
-              
-              # Lista de trabajos pendientes desde VIEW trabajos_faltante
-              fluidRow(
-                box(width = 12, title = "Trabajos Pendientes",
-                    tableOutput("trabajos_pendientes"))
-              )
-      ),
-      
-      # ==========================================
-      # PESTAÑA 4: ENCOMIENDAS
-      # Buscador de historial y lista de
-      # encomiendas pendientes con alerta por días
-      # ==========================================
-      tabItem(tabName = "encomiendas",
-              h2("Encomiendas"),
-              
-              # Buscador de historial por depto o empresa
-              fluidRow(
-                box(width = 12, title = "Buscar Historial",
-                    textInput("buscar_encomienda", "Buscar por departamento o empresa:"),
-                    DTOutput("historial_encomiendas")
-                )
-              ),
-              
-              # Encomiendas no entregadas con color por días guardado
-              # Blanco: < 3 días | Naranja: 3-7 días | Rojo: > 7 días
-              fluidRow(
-                box(width = 12, title = "Encomiendas Pendientes",
-                    DTOutput("encomiendas_pendientes"))
-              )
-      )
-    )
+    useShinyjs(),
+    tags$style(HTML("
+      .login-box { background-color: #fff; color: #333; }
+      .login-box input { color: #333; background-color: #fff; }
+    ")),
+    shinyauthr::loginUI("login", title = "Bienvenido a Gestión Edificio"),
+    uiOutput("contenido")
   )
 )
 
@@ -148,6 +67,97 @@ ui <- dashboardPage(
 # Define la lógica y consultas de cada output
 # ============================================
 server <- function(input, output, session) {
+  
+  credentials <- shinyauthr::loginServer(
+    id = "login",
+    data = usuarios,
+    user_col = user,
+    pwd_col = password_hash,
+    sodium_hashed = TRUE
+  )
+  
+  # Menú sidebar según rol
+  output$menu_sidebar <- renderUI({
+    req(credentials()$user_auth)
+    rol <- credentials()$info$rol
+    
+    if (rol == "conserje") {
+      sidebarMenu(
+        menuItem("Encomiendas", tabName = "encomiendas", icon = icon("box")),
+        menuItem("Mantención",  tabName = "mantencion",  icon = icon("wrench"))
+      )
+    } else {
+      sidebarMenu(
+        menuItem("Resumen",        tabName = "resumen",     icon = icon("home")),
+        menuItem("Gastos Comunes", tabName = "gastos",      icon = icon("dollar-sign")),
+        menuItem("Mantención",     tabName = "mantencion",  icon = icon("wrench")),
+        menuItem("Encomiendas",    tabName = "encomiendas", icon = icon("box"))
+      )
+    }
+  })
+  
+  # Contenido según rol
+  output$contenido <- renderUI({
+    req(credentials()$user_auth)
+    tabItems(
+      tabItem(tabName = "resumen",     uiOutput("resumen_ui")),
+      tabItem(tabName = "gastos",      uiOutput("gastos_ui")),
+      tabItem(tabName = "mantencion",  uiOutput("mantencion_ui")),
+      tabItem(tabName = "encomiendas", uiOutput("encomiendas_ui"))
+    )
+  }) 
+  
+  output$resumen_ui <- renderUI({
+    tagList(
+      h2("Resumen General"),
+      fluidRow(
+        valueBoxOutput("total_ingresos"),
+        valueBoxOutput("total_egresos"),
+        valueBoxOutput("fondo_reserva")
+      ),
+      fluidRow(
+        column(8, box(width = 12, title = "Ingresos y Egresos",
+                      plotOutput("grafico_balance", height = "300px"))),
+        column(4, box(width = 12, title = "Trabajadores Activos",
+                      tableOutput("trabajadores")))
+      )
+    )
+  })
+  output$gastos_ui <- renderUI({
+    tagList(
+      h2("Gastos Comunes"),
+      fluidRow(
+        column(4, selectInput("filtro_depto", "Departamento:", choices = c("Todos"))),
+        column(4, dateInput("filtro_fecha", "Mes:", value = Sys.Date())),
+        column(4, selectInput("filtro_estado", "Estado:", choices = c("Todos", "Pagados", "Pendientes")))
+      ),
+      fluidRow(box(width = 12, tableOutput("gastos_comunes")))
+    )
+  })
+  
+  output$mantencion_ui <- renderUI({
+    tagList(
+      h2("Mantención"),
+      fluidRow(box(width = 12, title = "Buscar Trabajos Realizados",
+                   textInput("buscar_trabajo", "Buscar por descripción:"),
+                   tableOutput("trabajos_realizados")
+      )),
+      fluidRow(box(width = 12, title = "Trabajos Pendientes",
+                   tableOutput("trabajos_pendientes")))
+    )
+  })
+  
+  output$encomiendas_ui <- renderUI({
+    tagList(
+      h2("Encomiendas"),
+      fluidRow(box(width = 12, title = "Buscar Historial",
+                   textInput("buscar_encomienda", "Buscar por departamento o empresa:"),
+                   DTOutput("historial_encomiendas")
+      )),
+      fluidRow(box(width = 12, title = "Encomiendas Pendientes",
+                   DTOutput("encomiendas_pendientes")))
+    )
+  })
   
   # --- PESTAÑA RESUMEN: KPIs ---
   
@@ -300,6 +310,9 @@ server <- function(input, output, session) {
        WHERE LOWER(d.numero_departamento) LIKE LOWER('%", input$buscar_encomienda, "%')
        OR LOWER(e.empresa_despacho) LIKE LOWER('%", input$buscar_encomienda, "%')"
     ))
+  })
+  observeEvent(input$logout_btn, {
+    session$reload()
   })
   
 }
