@@ -183,6 +183,13 @@ server <- function(input, output, session) {
   output$encomiendas_ui <- renderUI({
     tagList(
       h2("Encomiendas"),
+      fluidRow(
+        box(width = 12, title = "Registrar Encomienda",
+            selectInput("enc_depto", "Departamento:", choices = c()),
+            textInput("enc_empresa", "Empresa de despacho:"),
+            actionButton("guardar_encomienda", "Registrar", class = "btn-primary")
+        )
+      ),
       fluidRow(box(width = 12, title = "Buscar Historial",
                    textInput("buscar_encomienda", "Buscar por departamento o empresa:"),
                    DTOutput("historial_encomiendas")
@@ -191,7 +198,6 @@ server <- function(input, output, session) {
                    DTOutput("encomiendas_pendientes")))
     )
   })
-  
   # --- REGISTRO DE TURNO: formulario + historial de novedades ---
   output$registro_ui <- renderUI({
     tagList(
@@ -370,6 +376,7 @@ server <- function(input, output, session) {
   # Encomiendas no entregadas con alerta visual por días guardado:
   # Blanco < 3 días | Naranja 3-7 días | Rojo > 7 días
   output$encomiendas_pendientes <- renderDT({
+    input$guardar_encomienda  # Reactivo para actualizar tras cada guardado
     datos <- dbGetQuery(con,
                         "SELECT e.empresa_despacho AS Empresa, d.numero_departamento AS departamento,
        h.estado, TO_CHAR(h.fecha_hora, 'DD-MM-YYYY') AS fecha,
@@ -384,6 +391,37 @@ server <- function(input, output, session) {
                   backgroundColor = styleInterval(c(3, 7), c('white', 'orange', 'red')),
                   color           = styleInterval(c(3, 7), c('black', 'black', 'white'))
       )
+  })
+  # Carga departamentos en el selector de encomiendas
+  observe({
+    req(credentials()$user_auth)
+    input$guardar_encomienda
+    deptos <- dbGetQuery(con, "SELECT id_departamento, numero_departamento FROM departamentos ORDER BY numero_departamento")
+    choices <- setNames(deptos$id_departamento, deptos$numero_departamento)
+    updateSelectInput(session, "enc_depto", choices = choices)
+  })
+  
+  # Guarda la encomienda y su primer estado en el historial
+  observeEvent(input$guardar_encomienda, {
+    req(input$enc_empresa)
+    id_trabajador <- credentials()$info$id_trabajador
+    
+    # Inserta la encomienda
+    dbExecute(con, paste0(
+      "INSERT INTO ENCOMIENDA (id_departamento, empresa_despacho) VALUES (",
+      input$enc_depto, ", '", input$enc_empresa, "')"
+    ))
+    
+    # Obtiene el ID de la encomienda recién creada
+    id_enc <- dbGetQuery(con, "SELECT MAX(id_encomienda) AS id FROM encomienda")$id
+    
+    # Registra el estado inicial en el historial
+    dbExecute(con, paste0(
+      "INSERT INTO HISTORIAL_ENCOMIENDA (id_encomienda, id_trabajador, estado, fecha_hora) VALUES (",
+      id_enc, ", ", id_trabajador, ", 'Recibido', NOW())"
+    ))
+    
+    showNotification("Encomienda registrada exitosamente", type = "message")
   })
   
   # Buscador de historial por departamento o empresa
@@ -443,8 +481,9 @@ server <- function(input, output, session) {
     input$guardar_usuario
     dbGetQuery(con,
                "SELECT u.username, u.rol, t.nombre AS trabajador
-       FROM usuarios u
-       LEFT JOIN trabajadores t ON t.id_trabajador = u.id_trabajador")
+     FROM usuarios u
+     LEFT JOIN trabajadores t ON t.id_trabajador = u.id_trabajador
+     WHERE u.activo = true")
   })
   
   # Crea un nuevo usuario con contraseña hasheada
@@ -477,6 +516,7 @@ server <- function(input, output, session) {
       input$usuario_desactivar, "'"))
     showNotification("Usuario desactivado", type = "warning")
   })
+  
 }
 
 # --- INICIAR APLICACIÓN ---
