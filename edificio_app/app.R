@@ -54,6 +54,7 @@ ui <- dashboardPage(
   # --- MENÚ LATERAL ---
   # Se renderiza dinámicamente según el rol del usuario
   dashboardSidebar(
+    id = "tabs",
     uiOutput("menu_sidebar")
   ),
   
@@ -62,9 +63,12 @@ ui <- dashboardPage(
   dashboardBody(
     useShinyjs(),
     tags$style(HTML("
-      .login-box { background-color: #fff; color: #333; }
-      .login-box input { color: #333; background-color: #fff; }
-    ")),
+  .login-box { background-color: #fff; color: #333; }
+  .login-box input { color: #333; background-color: #fff; }
+  .nav-tabs li:nth-child(1) a { background-color: #5cb85c; color: white; }
+  .nav-tabs li:nth-child(2) a { background-color: #d9534f; color: white; }
+  .nav-tabs li.active a { font-size: 16px; font-weight: bold; }
+")),
     shinyauthr::loginUI("login", title = "Bienvenido a Gestión Edificio"),
     uiOutput("contenido")
   )
@@ -85,6 +89,16 @@ server <- function(input, output, session) {
     pwd_col      = password_hash,
     sodium_hashed = TRUE
   )
+  observe({
+    req(credentials()$user_auth)
+    rol <- credentials()$info$rol
+    
+    if (rol == "conserje") {
+      updateTabItems(session, "tabs", "registro")
+    } else {
+      updateTabItems(session, "tabs", "resumen")
+    }
+  })
   
   # Cierra sesión y recarga la app
   observeEvent(input$logout_btn, {
@@ -102,13 +116,16 @@ server <- function(input, output, session) {
     
     if (rol == "conserje") {
       sidebarMenu(
+        id = "tabs",
         menuItem("Registro",    tabName = "registro",    icon = icon("book")),
         menuItem("Encomiendas", tabName = "encomiendas", icon = icon("box")),
         menuItem("Mantención",  tabName = "mantencion",  icon = icon("wrench"))
       )
     } else {
-      sidebarMenu(
+      sidebarMenu( 
+        id = "tabs",
         menuItem("Resumen",        tabName = "resumen",     icon = icon("home")),
+        menuItem("Finanzas",       tabName = "finanzas", icon = icon("chart-line")),
         menuItem("Gastos Comunes", tabName = "gastos",      icon = icon("dollar-sign")),
         menuItem("Mantención",     tabName = "mantencion",  icon = icon("wrench")),
         menuItem("Encomiendas",    tabName = "encomiendas", icon = icon("box")),
@@ -123,6 +140,7 @@ server <- function(input, output, session) {
     req(credentials()$user_auth)
     tabItems(
       tabItem(tabName = "resumen",     uiOutput("resumen_ui")),
+      tabItem(tabName = "finanzas",    uiOutput("finanzas_ui")),
       tabItem(tabName = "gastos",      uiOutput("gastos_ui")),
       tabItem(tabName = "mantencion",  uiOutput("mantencion_ui")),
       tabItem(tabName = "encomiendas", uiOutput("encomiendas_ui")),
@@ -151,6 +169,98 @@ server <- function(input, output, session) {
                       tableOutput("trabajadores")))
       )
     )
+  })
+  
+  output$finanzas_ui <- renderUI({
+    tagList(
+      h2("Finanzas"),
+      tabsetPanel(
+        
+        # --- TAB INGRESOS ---
+        tabPanel("Ingresos",
+                 fluidRow(
+                   box(width = 4, title = "Registrar Ingreso",
+                       selectInput("ing_tipo", "Tipo:", choices = c()),
+                       selectInput("ing_depto", "Departamento:", choices = c("N/A")),
+                       numericInput("ing_monto", "Monto ($):", value = 0, min = 0),
+                       dateInput("ing_fecha", "Fecha:", value = Sys.Date()),
+                       actionButton("guardar_ingreso", "Registrar", class = "btn-primary")
+                   ),
+                   box(width = 8, title = "Historial de Ingresos",
+                       selectInput("filtro_periodo_ing", "Período:",
+                                   choices = c("Mes actual", "Semestre", "Año")),
+                       tableOutput("tabla_ingresos")
+                   )
+                 )
+        ),
+        
+        # --- TAB EGRESOS ---
+        tabPanel("Egresos",
+                 fluidRow(
+                   box(width = 4, title = "Registrar Egreso",
+                       selectInput("eg_tipo", "Tipo:", choices = c()),
+                       numericInput("eg_monto", "Monto ($):", value = 0, min = 0),
+                       dateInput("eg_fecha", "Fecha:", value = Sys.Date()),
+                       actionButton("guardar_egreso", "Registrar", class = "btn-primary")
+                   ),
+                   box(width = 8, title = "Historial de Egresos",
+                       selectInput("filtro_periodo_eg", "Período:",
+                                   choices = c("Mes actual", "Semestre", "Año")),
+                       tableOutput("tabla_egresos")
+                   )
+                 )
+        )
+      )
+    )
+  })
+  
+  # --- FINANZAS: HISTORIAL INGRESOS ---
+  output$tabla_ingresos <- renderTable({
+    input$guardar_ingreso
+    
+    periodo <- input$filtro_periodo_ing
+    
+    if (periodo == "Mes actual") {
+      filtro <- "AND DATE_TRUNC('month', fecha) = DATE_TRUNC('month', CURRENT_DATE)"
+    } else if (periodo == "Semestre") {
+      filtro <- "AND fecha >= CURRENT_DATE - INTERVAL '6 months'"
+    } else {
+      filtro <- "AND fecha >= CURRENT_DATE - INTERVAL '1 year'"
+    }
+    
+    dbGetQuery(con, paste0(
+      "SELECT ti.nombre AS tipo, d.numero_departamento AS departamento,
+     TO_CHAR(i.monto, 'FM999G999G999') AS monto,
+     TO_CHAR(i.fecha, 'DD-MM-YYYY') AS fecha
+     FROM ingresos i
+     INNER JOIN tipo_ingreso ti ON ti.id_tipo_ingreso = i.id_tipo_ingreso
+     LEFT JOIN departamentos d ON d.id_departamento = i.id_departamento
+     WHERE 1=1 ", filtro, " ORDER BY i.fecha DESC"
+    ))
+  })
+  
+  # --- FINANZAS: HISTORIAL EGRESOS ---
+  output$tabla_egresos <- renderTable({
+    input$guardar_egreso
+    
+    periodo <- input$filtro_periodo_eg
+    
+    if (periodo == "Mes actual") {
+      filtro <- "AND DATE_TRUNC('month', fecha) = DATE_TRUNC('month', CURRENT_DATE)"
+    } else if (periodo == "Semestre") {
+      filtro <- "AND fecha >= CURRENT_DATE - INTERVAL '6 months'"
+    } else {
+      filtro <- "AND fecha >= CURRENT_DATE - INTERVAL '1 year'"
+    }
+    
+    dbGetQuery(con, paste0(
+      "SELECT te.nombre AS tipo,
+     TO_CHAR(e.monto, 'FM999G999G999') AS monto,
+     TO_CHAR(e.fecha, 'DD-MM-YYYY') AS fecha
+     FROM egresos e
+     INNER JOIN tipo_egreso te ON te.id_tipo_egreso = e.id_tipo_egreso
+     WHERE 1=1 ", filtro, " ORDER BY e.fecha DESC"
+    ))
   })
   
   # --- GASTOS COMUNES: filtros + tabla ---
@@ -317,6 +427,8 @@ server <- function(input, output, session) {
   # --- GASTOS COMUNES ---
   # Carga los departamentos al selector al iniciar
   observe({
+    req(credentials()$user_auth)
+    req(!is.null(input$filtro_depto))
     deptos <- dbGetQuery(con,
                          "SELECT numero_departamento FROM departamentos ORDER BY numero_departamento")
     updateSelectInput(session, "filtro_depto", choices = c("Todos", deptos$numero_departamento))
@@ -362,15 +474,16 @@ server <- function(input, output, session) {
     req(nchar(input$buscar_trabajo) > 0)
     dbGetQuery(con, paste0(
       "SELECT nombre AS empresa, servicio_prestado,
-       CAST(mantencion AS TEXT) AS tipo,
-       TO_CHAR(fecha_trabajo, 'DD-MM-YYYY') AS fecha
-       FROM mantencion
-       INNER JOIN empresas ON empresas.id_empresa = mantencion.id_empresa
-       WHERE LOWER(servicio_prestado) LIKE LOWER('%", input$buscar_trabajo, "%')
-       OR LOWER(CAST(mantencion AS TEXT)) LIKE LOWER('%", input$buscar_trabajo, "%')"
+     CAST(mantencion AS TEXT) AS tipo,
+     TO_CHAR(fecha_trabajo, 'DD-MM-YYYY') AS fecha,
+     TO_CHAR(f.costo, 'FM999G999G999') AS monto
+     FROM mantencion
+     INNER JOIN empresas ON empresas.id_empresa = mantencion.id_empresa
+     LEFT JOIN factura_mantencion f ON f.id_mantencion = mantencion.id_mantencion
+     WHERE LOWER(servicio_prestado) LIKE LOWER('%", input$buscar_trabajo, "%')
+     OR LOWER(CAST(mantencion AS TEXT)) LIKE LOWER('%", input$buscar_trabajo, "%')"
     ))
-  })
-  
+  })  
   # --- ENCOMIENDAS ---
   
   # Encomiendas no entregadas con alerta visual por días guardado:
@@ -517,6 +630,50 @@ server <- function(input, output, session) {
     showNotification("Usuario desactivado", type = "warning")
   })
   
+  
+# Carga tipos de ingreso y departamentos en los selectores
+observe({
+  req(credentials()$info$rol == "admin")
+  req(!is.null(input$ing_tipo))
+  
+  tipos_ing <- dbGetQuery(con, "SELECT id_tipo_ingreso, nombre FROM tipo_ingreso ORDER BY nombre")
+  updateSelectInput(session, "ing_tipo", 
+                    choices = setNames(tipos_ing$id_tipo_ingreso, tipos_ing$nombre))
+  
+  deptos <- dbGetQuery(con, "SELECT id_departamento, numero_departamento FROM departamentos ORDER BY numero_departamento")
+  choices_depto <- c("N/A" = 0, setNames(deptos$id_departamento, deptos$numero_departamento))
+  updateSelectInput(session, "ing_depto", choices = choices_depto)
+  
+  tipos_eg <- dbGetQuery(con, "SELECT id_tipo_egreso, nombre FROM tipo_egreso ORDER BY nombre")
+  updateSelectInput(session, "eg_tipo",
+                    choices = setNames(tipos_eg$id_tipo_egreso, tipos_eg$nombre))
+})
+
+# Guarda nuevo ingreso
+observeEvent(input$guardar_ingreso, {
+  req(input$ing_monto > 0)
+  
+  id_depto <- if (input$ing_depto == 0) "NULL" else input$ing_depto
+  
+  dbExecute(con, paste0(
+    "INSERT INTO INGRESOS (id_tipo_ingreso, id_departamento, monto, fecha) VALUES (",
+    input$ing_tipo, ", ", id_depto, ", ",
+    input$ing_monto, ", '", input$ing_fecha, "')"
+  ))
+  showNotification("Ingreso registrado exitosamente", type = "message")
+})
+
+# Guarda nuevo egreso
+observeEvent(input$guardar_egreso, {
+  req(input$eg_monto > 0)
+  
+  dbExecute(con, paste0(
+    "INSERT INTO EGRESOS (id_tipo_egreso, monto, fecha) VALUES (",
+    input$eg_tipo, ", ", input$eg_monto, ", '", input$eg_fecha, "')"
+  ))
+  showNotification("Egreso registrado exitosamente", type = "message")
+})
+
 }
 
 # --- INICIAR APLICACIÓN ---
