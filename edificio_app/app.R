@@ -68,6 +68,7 @@ ui <- dashboardPage(
   .nav-tabs li:nth-child(1) a { background-color: #5cb85c; color: white; }
   .nav-tabs li:nth-child(2) a { background-color: #d9534f; color: white; }
   .nav-tabs li.active a { font-size: 16px; font-weight: bold; }
+  .nav-tabs li:nth-child(3) a { background-color: #337ab7; color: white; }
 ")),
     shinyauthr::loginUI("login", title = "Bienvenido a Gestión Edificio"),
     uiOutput("contenido")
@@ -209,7 +210,24 @@ server <- function(input, output, session) {
                        tableOutput("tabla_egresos")
                    )
                  )
+        ),
+        tabPanel("Sueldos",
+                 fluidRow(
+                   box(width = 4, title = "Registrar Sueldo",
+                       selectInput("sueldo_trabajador", "Trabajador:", choices = c()),
+                       numericInput("sueldo_monto", "Monto bruto ($):", value = 0, min = 0),
+                       selectInput("sueldo_periodo", "Período pagado:",
+                                   choices = c("Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                                               "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre")),
+                       numericInput("sueldo_anio", "Año:", value = as.numeric(format(Sys.Date(), "%Y")), min = 2020),
+                       actionButton("guardar_sueldo", "Registrar", class = "btn-primary")
+                   ),
+                   box(width = 8, title = "Historial de Sueldos",
+                       tableOutput("tabla_sueldos")
+                   )
+                 )
         )
+        
       )
     )
   })
@@ -242,6 +260,7 @@ server <- function(input, output, session) {
   # --- FINANZAS: HISTORIAL EGRESOS ---
   output$tabla_egresos <- renderTable({
     input$guardar_egreso
+    input$guardar_sueldo
     
     periodo <- input$filtro_periodo_eg
     
@@ -255,11 +274,13 @@ server <- function(input, output, session) {
     
     dbGetQuery(con, paste0(
       "SELECT te.nombre AS tipo,
-     TO_CHAR(e.monto, 'FM999G999G999') AS monto,
-     TO_CHAR(e.fecha, 'DD-MM-YYYY') AS fecha
-     FROM egresos e
-     INNER JOIN tipo_egreso te ON te.id_tipo_egreso = e.id_tipo_egreso
-     WHERE 1=1 ", filtro, " ORDER BY e.fecha DESC"
+   TO_CHAR(DATE_TRUNC('month', e.fecha), 'MM-YYYY') AS periodo,
+   TO_CHAR(SUM(e.monto), 'FM999G999G999') AS monto
+   FROM egresos e
+   INNER JOIN tipo_egreso te ON te.id_tipo_egreso = e.id_tipo_egreso
+   WHERE 1=1 ", filtro, "
+   GROUP BY te.nombre, DATE_TRUNC('month', e.fecha)
+   ORDER BY DATE_TRUNC('month', e.fecha) DESC, SUM(e.monto) DESC"
     ))
   })
   
@@ -329,33 +350,112 @@ server <- function(input, output, session) {
   output$usuarios_ui <- renderUI({
     req(credentials()$info$rol == "admin")
     tagList(
-      h2("Administración de Usuarios"),
-      fluidRow(
-        # Formulario de creación de usuario
-        box(width = 6, title = "Nuevo Usuario",
-            textInput("nuevo_username", "Usuario:"),
-            textInput("nuevo_password", "Contraseña:"),
-            selectInput("nuevo_rol", "Rol:", choices = c("conserje", "admin", "comite")),
-            # Selector de trabajador solo visible cuando el rol es conserje
-            conditionalPanel(
-              condition = "input.nuevo_rol == 'conserje'",
-              selectInput("nuevo_trabajador", "Trabajador:", choices = c())
-            ),
-            actionButton("guardar_usuario", "Crear Usuario", class = "btn-primary")
+      h2("Administración"),
+      tabsetPanel(
+        
+        # --- TAB USUARIOS ---
+        tabPanel("Usuarios",
+                 fluidRow(
+                   box(width = 6, title = "Nuevo Usuario",
+                       textInput("nuevo_username", "Usuario:"),
+                       textInput("nuevo_password", "Contraseña:"),
+                       selectInput("nuevo_rol", "Rol:", choices = c("conserje", "admin", "comite")),
+                       conditionalPanel(
+                         condition = "input.nuevo_rol == 'conserje'",
+                         selectInput("nuevo_trabajador", "Trabajador:", choices = c())
+                       ),
+                       actionButton("guardar_usuario", "Crear Usuario", class = "btn-primary")
+                   ),
+                   box(width = 6, title = "Usuarios Registrados",
+                       tableOutput("tabla_usuarios")
+                   ),
+                   box(width = 12, title = "Desactivar Usuario",
+                       selectInput("usuario_desactivar", "Seleccionar usuario:", choices = c()),
+                       actionButton("desactivar_usuario", "Desactivar", class = "btn-danger")
+                   )
+                 )
         ),
-        # Lista de usuarios registrados
-        box(width = 6, title = "Usuarios Registrados",
-            tableOutput("tabla_usuarios")
-        ),
-        # Desactivar usuario existente
-        box(width = 12, title = "Desactivar Usuario",
-            selectInput("usuario_desactivar", "Seleccionar usuario:", choices = c()),
-            actionButton("desactivar_usuario", "Desactivar", class = "btn-danger")
+        # --- TAB TRABAJADORES ---
+        tabPanel("Trabajadores",
+                 fluidRow(
+                   box(width = 6, title = "Nuevo Trabajador",
+                       textInput("trab_nombre", "Nombre:"),
+                       textInput("trab_apellido", "Apellido:"),
+                       textInput("trab_cargo", "Cargo:"),
+                       textInput("trab_celular", "Celular:"),
+                       textInput("trab_rut", "RUT:"),
+                       textInput("trab_email", "Email:"),
+                       textInput("trab_direccion", "Dirección:"),
+                       numericInput("trab_sueldo", "Sueldo base ($):", value = 0, min = 0),
+                       dateInput("trab_fecha_contrato", "Fecha contratación:", value = Sys.Date()),
+                       actionButton("guardar_trabajador", "Contratar", class = "btn-success")
+                   ),
+                   box(width = 6, title = "Trabajadores Activos",
+                       tableOutput("tabla_trabajadores"),
+                       hr(),
+                       selectInput("trab_despedir", "Despedir trabajador:", choices = c()),
+                       actionButton("despedir_trabajador", "Despedir", class = "btn-danger")
+                   )
+                 )
         )
       )
     )
   })
+  # Carga trabajadores activos en el selector de despedir
+  observe({
+    req(credentials()$info$rol == "admin")
+    trabajadores <- dbGetQuery(con,
+                               "SELECT id_trabajador, nombre FROM trabajadores WHERE activo = true")
+    choices <- setNames(trabajadores$id_trabajador, trabajadores$nombre)
+    updateSelectInput(session, "trab_despedir", choices = choices)
+  })
   
+  # Carga tabla de trabajadores activos
+  output$tabla_trabajadores <- renderTable({
+    input$guardar_trabajador
+    input$despedir_trabajador
+    dbGetQuery(con, "SELECT nombre, apellido, cargo FROM trabajadores WHERE activo = true")
+  })
+  
+  # Contratar nuevo trabajador
+  observeEvent(input$guardar_trabajador, {
+    req(input$trab_nombre, input$trab_apellido, input$trab_cargo)
+    
+    # INSERT en TRABAJADORES
+    dbExecute(con, paste0(
+      "INSERT INTO TRABAJADORES_CONFIDENCIAL (id_trabajador, sueldo, email, rut, fecha_contratacion, direccion) VALUES (",
+      id_trab, ", ", input$trab_sueldo, ", '",
+      input$trab_email, "', '", input$trab_rut, "', '",
+      input$trab_fecha_contrato, "', '", input$trab_direccion, "')"
+    ))
+    
+    # Obtiene el ID del trabajador recién creado
+    id_trab <- dbGetQuery(con, "SELECT MAX(id_trabajador) AS id FROM trabajadores")$id
+    
+    # INSERT en TRABAJADORES_CONFIDENCIAL
+    dbExecute(con, paste0(
+      "INSERT INTO TRABAJADORES_CONFIDENCIAL (id_trabajador, sueldo, email, rut, fecha_contratacion) VALUES (",
+      id_trab, ", ", input$trab_sueldo, ", '",
+      input$trab_email, "', '", input$trab_rut, "', '",
+      input$trab_fecha_contrato, "')"
+    ))
+    
+    showNotification("Trabajador contratado exitosamente", type = "message")
+  })
+  
+  # Despedir trabajador
+  observeEvent(input$despedir_trabajador, {
+    req(input$trab_despedir)
+    
+    dbExecute(con, paste0(
+      "UPDATE TRABAJADORES SET activo = false WHERE id_trabajador = ", input$trab_despedir))
+    
+    dbExecute(con, paste0(
+      "UPDATE TRABAJADORES_CONFIDENCIAL SET fecha_desvinculacion = NOW() 
+     WHERE id_trabajador = ", input$trab_despedir))
+    
+    showNotification("Trabajador desvinculado", type = "warning")
+  })
   # ============================================
   # LÓGICA DE DATOS (renderTable, renderPlot, etc.)
   # ============================================
@@ -582,11 +682,11 @@ server <- function(input, output, session) {
   # Se actualiza al crear un nuevo usuario
   observe({
     req(credentials()$info$rol == "admin")
-    input$guardar_usuario
+    req(!is.null(input$trab_despedir))
     trabajadores <- dbGetQuery(con,
                                "SELECT id_trabajador, nombre FROM trabajadores WHERE activo = true")
     choices <- setNames(trabajadores$id_trabajador, trabajadores$nombre)
-    updateSelectInput(session, "nuevo_trabajador", choices = choices)
+    updateSelectInput(session, "trab_despedir", choices = choices)
   })
   
   # Muestra todos los usuarios registrados (activos e inactivos)
@@ -643,8 +743,8 @@ observe({
   deptos <- dbGetQuery(con, "SELECT id_departamento, numero_departamento FROM departamentos ORDER BY numero_departamento")
   choices_depto <- c("N/A" = 0, setNames(deptos$id_departamento, deptos$numero_departamento))
   updateSelectInput(session, "ing_depto", choices = choices_depto)
-  
-  tipos_eg <- dbGetQuery(con, "SELECT id_tipo_egreso, nombre FROM tipo_egreso ORDER BY nombre")
+
+  tipos_eg <- dbGetQuery(con, "SELECT id_tipo_egreso, nombre FROM tipo_egreso WHERE nombre != 'Sueldo' ORDER BY nombre")  
   updateSelectInput(session, "eg_tipo",
                     choices = setNames(tipos_eg$id_tipo_egreso, tipos_eg$nombre))
 })
@@ -673,7 +773,48 @@ observeEvent(input$guardar_egreso, {
   ))
   showNotification("Egreso registrado exitosamente", type = "message")
 })
+# Carga trabajadores activos en el selector de sueldos
+observe({
+  req(credentials()$info$rol == "admin")
+  req(!is.null(input$sueldo_trabajador))
+  trabajadores <- dbGetQuery(con,
+                             "SELECT id_trabajador, nombre FROM trabajadores WHERE activo = true")
+  choices <- setNames(trabajadores$id_trabajador, trabajadores$nombre)
+  updateSelectInput(session, "sueldo_trabajador", choices = choices)
+})
 
+# Guarda el sueldo mensual del trabajador
+observeEvent(input$guardar_sueldo, {
+  req(input$sueldo_monto > 0)
+  
+  fecha_pago <- paste0(input$sueldo_anio, "-",
+                       match(input$sueldo_periodo, c("Enero","Febrero","Marzo","Abril","Mayo","Junio",
+                                                     "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre")),
+                       "-01")
+  
+  id_sueldo <- dbGetQuery(con, "SELECT id_tipo_egreso FROM tipo_egreso WHERE nombre = 'Sueldo'")$id_tipo_egreso
+  
+  dbExecute(con, paste0(
+    "INSERT INTO EGRESOS (id_tipo_egreso, monto, fecha, id_trabajador) VALUES (",
+    id_sueldo, ", ", input$sueldo_monto, ", '", fecha_pago, "', ",
+    input$sueldo_trabajador, ")"
+  ))
+  
+  showNotification("Sueldo registrado exitosamente", type = "message")
+})
+# Historial de sueldos
+output$tabla_sueldos <- renderTable({
+  input$guardar_sueldo
+  dbGetQuery(con,
+             "SELECT t.nombre AS trabajador,
+     TO_CHAR(e.monto, 'FM999G999G999') AS sueldo,
+     TO_CHAR(e.fecha, 'MM-YYYY') AS periodo
+     FROM egresos e
+     INNER JOIN tipo_egreso te ON te.id_tipo_egreso = e.id_tipo_egreso
+     INNER JOIN trabajadores t ON t.id_trabajador = e.id_trabajador
+     WHERE te.nombre = 'Sueldo'
+     ORDER BY e.fecha DESC LIMIT 20")
+})
 }
 
 # --- INICIAR APLICACIÓN ---
