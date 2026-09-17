@@ -314,6 +314,11 @@ server <- function(input, output, session) {
   output$encomiendas_ui <- renderUI({
     tagList(
       h2("Encomiendas"),
+            fluidRow(box(width = 12, title = "Buscar Historial",
+                   textInput("buscar_encomienda", "Buscar por departamento o empresa:"),
+                   DTOutput("historial_encomiendas")
+      )),
+
       fluidRow(
         box(width = 12, title = "Registrar Encomienda",
             selectInput("enc_depto", "Departamento:", choices = c()),
@@ -321,12 +326,15 @@ server <- function(input, output, session) {
             actionButton("guardar_encomienda", "Registrar", class = "btn-primary")
         )
       ),
-      fluidRow(box(width = 12, title = "Buscar Historial",
-                   textInput("buscar_encomienda", "Buscar por departamento o empresa:"),
-                   DTOutput("historial_encomiendas")
-      )),
-      fluidRow(box(width = 12, title = "Encomiendas Pendientes",
-                   DTOutput("encomiendas_pendientes")))
+      
+      fluidRow(
+        box(width = 12, title = "Actualizar Estado Encomienda",
+            selectInput("enc_id", "Seleccionar encomienda:", choices = c()),
+            selectInput("enc_estado_nuevo", "Nuevo estado:",
+                        choices = c("En Bodega", "Entregado")),
+            actionButton("actualizar_enc", "Actualizar", class = "btn-warning")
+        )
+      ),
     )
   })
   # --- REGISTRO DE TURNO: formulario + historial de novedades ---
@@ -404,6 +412,9 @@ server <- function(input, output, session) {
   # Carga trabajadores activos en el selector de despedir
   observe({
     req(credentials()$info$rol == "admin")
+    req(!is.null(input$trab_despedir))
+    input$guardar_trabajador
+    input$despedir_trabajador
     trabajadores <- dbGetQuery(con,
                                "SELECT id_trabajador, nombre FROM trabajadores WHERE activo = true")
     choices <- setNames(trabajadores$id_trabajador, trabajadores$nombre)
@@ -421,23 +432,22 @@ server <- function(input, output, session) {
   observeEvent(input$guardar_trabajador, {
     req(input$trab_nombre, input$trab_apellido, input$trab_cargo)
     
-    # INSERT en TRABAJADORES
+    # 1. INSERT en TRABAJADORES
+    dbExecute(con, paste0(
+      "INSERT INTO TRABAJADORES (nombre, apellido, cargo, celular, activo) VALUES ('",
+      input$trab_nombre, "', '", input$trab_apellido, "', '",
+      input$trab_cargo, "', '", input$trab_celular, "', true)"
+    ))
+    
+    # 2. Obtiene el ID recién creado
+    id_trab <- dbGetQuery(con, "SELECT MAX(id_trabajador) AS id FROM trabajadores")$id
+    
+    # 3. INSERT en TRABAJADORES_CONFIDENCIAL
     dbExecute(con, paste0(
       "INSERT INTO TRABAJADORES_CONFIDENCIAL (id_trabajador, sueldo, email, rut, fecha_contratacion, direccion) VALUES (",
       id_trab, ", ", input$trab_sueldo, ", '",
       input$trab_email, "', '", input$trab_rut, "', '",
       input$trab_fecha_contrato, "', '", input$trab_direccion, "')"
-    ))
-    
-    # Obtiene el ID del trabajador recién creado
-    id_trab <- dbGetQuery(con, "SELECT MAX(id_trabajador) AS id FROM trabajadores")$id
-    
-    # INSERT en TRABAJADORES_CONFIDENCIAL
-    dbExecute(con, paste0(
-      "INSERT INTO TRABAJADORES_CONFIDENCIAL (id_trabajador, sueldo, email, rut, fecha_contratacion) VALUES (",
-      id_trab, ", ", input$trab_sueldo, ", '",
-      input$trab_email, "', '", input$trab_rut, "', '",
-      input$trab_fecha_contrato, "')"
     ))
     
     showNotification("Trabajador contratado exitosamente", type = "message")
@@ -521,9 +531,16 @@ server <- function(input, output, session) {
   # --- RESUMEN: TRABAJADORES ---
   # Lista de trabajadores activos
   output$trabajadores <- renderTable({
-    dbGetQuery(con, "SELECT nombre, cargo FROM trabajadores WHERE activo = true")
+    input$guardar_trabajador
+    input$despedir_trabajador
+    dbGetQuery(con,
+               "SELECT t.nombre, t.cargo, 
+     TO_CHAR(tc.sueldo, 'FM999G999G999') AS sueldo_base
+     FROM trabajadores t
+     INNER JOIN trabajadores_confidencial tc ON tc.id_trabajador = t.id_trabajador
+     WHERE t.activo = true")
   })
-  
+   
   # --- GASTOS COMUNES ---
   # Carga los departamentos al selector al iniciar
   observe({
@@ -642,13 +659,20 @@ server <- function(input, output, session) {
   output$historial_encomiendas <- renderDT({
     req(nchar(input$buscar_encomienda) > 0)
     dbGetQuery(con, paste0(
-      "SELECT e.empresa_despacho, d.numero_departamento, h.estado,
-       TO_CHAR(h.fecha_hora, 'DD-MM-YYYY') AS fecha
-       FROM historial_encomienda h
-       INNER JOIN encomienda e ON e.id_encomienda = h.id_encomienda
-       INNER JOIN departamentos d ON d.id_departamento = e.id_departamento
-       WHERE LOWER(d.numero_departamento) LIKE LOWER('%", input$buscar_encomienda, "%')
-       OR LOWER(e.empresa_despacho) LIKE LOWER('%", input$buscar_encomienda, "%')"
+      "SELECT e.empresa_despacho,
+     d.numero_departamento AS depto,
+     MAX(CASE WHEN h.estado = 'Recibido' THEN t.nombre END) AS recibe,
+     TO_CHAR(MAX(CASE WHEN h.estado = 'Recibido' THEN h.fecha_hora END), 'DD-MM-YYYY') AS fecha_recepcion,
+     TO_CHAR(MAX(CASE WHEN h.estado = 'En Bodega' THEN h.fecha_hora END), 'DD-MM-YYYY') AS fecha_bodega,
+     MAX(CASE WHEN h.estado = 'Entregado' THEN t.nombre END) AS entrega,
+     TO_CHAR(MAX(CASE WHEN h.estado = 'Entregado' THEN h.fecha_hora END), 'DD-MM-YYYY') AS fecha_entrega
+     FROM historial_encomienda h
+     INNER JOIN encomienda e ON e.id_encomienda = h.id_encomienda
+     INNER JOIN departamentos d ON d.id_departamento = e.id_departamento
+     INNER JOIN trabajadores t ON t.id_trabajador = h.id_trabajador
+     WHERE LOWER(d.numero_departamento) LIKE LOWER('%", input$buscar_encomienda, "%')
+     OR LOWER(e.empresa_despacho) LIKE LOWER('%", input$buscar_encomienda, "%')
+     GROUP BY e.empresa_despacho, d.numero_departamento"
     ))
   })
   
@@ -682,23 +706,23 @@ server <- function(input, output, session) {
   # Se actualiza al crear un nuevo usuario
   observe({
     req(credentials()$info$rol == "admin")
-    req(!is.null(input$trab_despedir))
+    req(!is.null(input$nuevo_trabajador))
+    input$guardar_usuario
     trabajadores <- dbGetQuery(con,
                                "SELECT id_trabajador, nombre FROM trabajadores WHERE activo = true")
     choices <- setNames(trabajadores$id_trabajador, trabajadores$nombre)
-    updateSelectInput(session, "trab_despedir", choices = choices)
-  })
-  
+    updateSelectInput(session, "nuevo_trabajador", choices = choices)
+  })  
   # Muestra todos los usuarios registrados (activos e inactivos)
   output$tabla_usuarios <- renderTable({
     input$guardar_usuario
+    input$desactivar_usuario
     dbGetQuery(con,
                "SELECT u.username, u.rol, t.nombre AS trabajador
      FROM usuarios u
      LEFT JOIN trabajadores t ON t.id_trabajador = u.id_trabajador
      WHERE u.activo = true")
-  })
-  
+  })  
   # Crea un nuevo usuario con contraseña hasheada
   observeEvent(input$guardar_usuario, {
     req(input$nuevo_username, input$nuevo_password)
@@ -815,6 +839,37 @@ output$tabla_sueldos <- renderTable({
      WHERE te.nombre = 'Sueldo'
      ORDER BY e.fecha DESC LIMIT 20")
 })
+# Carga encomiendas pendientes en el selector
+observe({
+  req(credentials()$user_auth)
+  req(!is.null(input$enc_id))
+  input$actualizar_enc
+  input$guardar_encomienda
+  enc <- dbGetQuery(con,
+                    "SELECT h.id_encomienda, 
+     e.empresa_despacho || ' - Depto ' || d.numero_departamento AS descripcion
+     FROM historial_encomienda h
+     INNER JOIN encomienda e ON e.id_encomienda = h.id_encomienda
+     INNER JOIN departamentos d ON d.id_departamento = e.id_departamento
+     WHERE h.estado != 'Entregado'
+     GROUP BY h.id_encomienda, e.empresa_despacho, d.numero_departamento")
+  choices <- setNames(enc$id_encomienda, enc$descripcion)
+  updateSelectInput(session, "enc_id", choices = choices)
+})
+
+# Actualiza el estado de la encomienda
+observeEvent(input$actualizar_enc, {
+  req(input$enc_id)
+  id_trabajador <- credentials()$info$id_trabajador
+  
+  dbExecute(con, paste0(
+    "INSERT INTO HISTORIAL_ENCOMIENDA (id_encomienda, id_trabajador, estado, fecha_hora) VALUES (",
+    input$enc_id, ", ", id_trabajador, ", '", input$enc_estado_nuevo, "', NOW())"
+  ))
+  
+  showNotification("Estado actualizado exitosamente", type = "message")
+})
+
 }
 
 # --- INICIAR APLICACIÓN ---
