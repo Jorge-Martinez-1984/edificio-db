@@ -120,7 +120,8 @@ server <- function(input, output, session) {
         id = "tabs",
         menuItem("Registro",    tabName = "registro",    icon = icon("book")),
         menuItem("Encomiendas", tabName = "encomiendas", icon = icon("box")),
-        menuItem("Mantención",  tabName = "mantencion",  icon = icon("wrench"))
+        menuItem("Mantención",  tabName = "mantencion",  icon = icon("wrench")),
+        menuItem("Departamentos", tabName = "departamentos", icon = icon("building"))
       )
     } else {
       sidebarMenu( 
@@ -131,7 +132,8 @@ server <- function(input, output, session) {
         menuItem("Mantención",     tabName = "mantencion",  icon = icon("wrench")),
         menuItem("Encomiendas",    tabName = "encomiendas", icon = icon("box")),
         menuItem("Registro",       tabName = "registro",    icon = icon("book")),
-        menuItem("Usuarios",       tabName = "usuarios",    icon = icon("users"))
+        menuItem("Usuarios",       tabName = "usuarios",    icon = icon("users")),
+        menuItem("Departamentos", tabName = "departamentos", icon = icon("building"))
       )
     }
   })
@@ -146,7 +148,8 @@ server <- function(input, output, session) {
       tabItem(tabName = "mantencion",  uiOutput("mantencion_ui")),
       tabItem(tabName = "encomiendas", uiOutput("encomiendas_ui")),
       tabItem(tabName = "registro",    uiOutput("registro_ui")),
-      tabItem(tabName = "usuarios",    uiOutput("usuarios_ui"))
+      tabItem(tabName = "usuarios",    uiOutput("usuarios_ui")),
+      tabItem(tabName = "departamentos", uiOutput("departamentos_ui"))
     )
   })
   
@@ -409,6 +412,154 @@ server <- function(input, output, session) {
       )
     )
   })
+  
+  # --- DEPARTAMENTOS UI ---
+  output$departamentos_ui <- renderUI({
+    rol <- credentials()$info$rol
+    
+    if (rol == "conserje") {
+      tagList(
+        h2("Departamentos"),
+        tableOutput("tabla_deptos")
+      )
+    } else {
+      tagList(
+        h2("Departamentos"),
+        tabsetPanel(
+          
+          # --- TAB VER ---
+          tabPanel("Ver", tableOutput("tabla_deptos")),
+          
+          # --- TAB REGISTRAR ---
+          tabPanel("Registrar",
+                   fluidRow(
+                     box(width = 6, title = "Nuevo Registro",
+                         selectInput("dep_tipo", "Tipo:", 
+                                     choices = c("Propietario", "Arrendatario", "Residente")),
+                         textInput("dep_nombre", "Nombre:"),
+                         textInput("dep_apellido", "Apellido:"),
+                         textInput("dep_rut", "RUT:"),
+                         textInput("dep_celular", "Celular:"),
+                         textInput("dep_email", "Email:"),
+                         # Depto: solo para Propietario y Arrendatario
+                         conditionalPanel(
+                           condition = "input.dep_tipo != 'Residente'",
+                           selectInput("dep_depto", "Departamento:", choices = c())
+                         ),
+                         # Fecha ingreso: solo para Arrendatario
+                         conditionalPanel(
+                           condition = "input.dep_tipo == 'Arrendatario'",
+                           dateInput("dep_fecha_ingreso", "Fecha ingreso:", value = Sys.Date())
+                         ),
+                         # Titular: solo para Residente
+                         conditionalPanel(
+                           condition = "input.dep_tipo == 'Residente'",
+                           selectInput("dep_titular", "Titular:", choices = c())
+                         ),
+                         actionButton("guardar_dep", "Registrar", class = "btn-primary")
+                     )
+                   )
+          ),
+          
+          # --- TAB DESVINCULAR ---
+          tabPanel("Desvincular",
+                   fluidRow(
+                     box(width = 6, title = "Desvincular",
+                         selectInput("desv_tipo", "Tipo:",
+                                     choices = c("Propietario", "Arrendatario")),
+                         # Selector propietario + depto: solo cuando tipo es Propietario
+                         conditionalPanel(
+                           condition = "input.desv_tipo == 'Propietario'",
+                           selectInput("desv_propietario", "Propietario:", choices = c()),
+                           selectInput("desv_depto_prop", "Departamento:", choices = c())
+                         ),
+                         # Selector titular + fecha: solo cuando tipo es Arrendatario
+                         conditionalPanel(
+                           condition = "input.desv_tipo == 'Arrendatario'",
+                           selectInput("desv_titular", "Arrendatario:", choices = c()),
+                           dateInput("desv_fecha_salida", "Fecha de salida:", value = Sys.Date())
+                         ),
+                         actionButton("desv_guardar", "Desvincular", class = "btn-danger")
+                     )
+                   )
+          )
+        )
+      )
+    }
+  })
+  
+  # --- OBSERVE: carga propietarios y titulares para desvincular ---
+  observe({
+    req(credentials()$info$rol == "admin")
+    req(!is.null(input$desv_propietario))
+    req(nchar(as.character(input$desv_propietario)) > 0)
+    
+    deptos <- dbGetQuery(con, paste0(
+      "SELECT d.id_departamento, d.numero_departamento 
+     FROM departamentos d
+     INNER JOIN propietarios p ON p.id_propietario = d.id_propietario
+     WHERE p.id_propietario IN (
+       SELECT id_propietario FROM propietarios 
+       WHERE nombre = (SELECT nombre FROM propietarios WHERE id_propietario = ", input$desv_propietario, ")
+       AND apellido = (SELECT apellido FROM propietarios WHERE id_propietario = ", input$desv_propietario, ")
+     )"))
+    updateSelectInput(session, "desv_depto_prop",
+                      choices = setNames(deptos$id_departamento, deptos$numero_departamento))
+  })
+  
+  # --- OBSERVE: carga deptos del propietario seleccionado ---
+  observe({
+    req(credentials()$info$rol == "admin")
+    req(!is.null(input$desv_propietario))
+    req(nchar(as.character(input$desv_propietario)) > 0)
+    
+    deptos <- dbGetQuery(con, paste0(
+      "SELECT id_departamento, numero_departamento FROM departamentos 
+     WHERE id_propietario = ", input$desv_propietario))
+    updateSelectInput(session, "desv_depto_prop",
+                      choices = setNames(deptos$id_departamento, deptos$numero_departamento))
+  })
+  
+  # --- OBSERVEEVENT: ejecuta la desvinculación ---
+  observeEvent(input$desv_guardar, {
+    if (input$desv_tipo == "Propietario") {
+      dbExecute(con, paste0(
+        "UPDATE DEPARTAMENTOS SET id_propietario = NULL 
+       WHERE id_departamento = ", input$desv_depto_prop))
+      dbExecute(con, paste0(
+        "UPDATE PROPIETARIOS SET fecha_desvinculacion = CURRENT_DATE 
+       WHERE id_propietario = ", input$desv_propietario))
+      showNotification("Propietario desvinculado", type = "warning")
+      
+    } else if (input$desv_tipo == "Arrendatario") {
+      dbExecute(con, paste0(
+        "UPDATE TITULAR SET fecha_salida = '", input$desv_fecha_salida,
+        "' WHERE id_titular = ", input$desv_titular))
+      showNotification("Arrendatario desvinculado — residentes desactivados automáticamente", type = "warning")
+    }
+  })
+  
+  output$tabla_deptos <- renderTable({
+    invalidateLater(5000, session)
+    dbGetQuery(con,
+               "SELECT d.numero_departamento AS depto,
+     p.nombre || ' ' || p.apellido AS propietario,
+     pc.celular AS contacto_propietario,
+     t.nombre || ' ' || t.apellido AS arrendatario,
+     t.celular AS contacto_arrendatario,
+     COALESCE(sub.residentes, 0) + CASE WHEN t.id_titular IS NOT NULL THEN 1 ELSE 0 END AS residentes
+     FROM departamentos d
+     LEFT JOIN historial_propietario hp ON hp.id_departamento = d.id_departamento AND hp.fecha_fin IS NULL
+     LEFT JOIN propietarios p ON p.id_propietario = hp.id_propietario
+     LEFT JOIN propietarios_confidencial pc ON pc.id_propietario = p.id_propietario
+     LEFT JOIN titular t ON t.id_departamento = d.id_departamento AND t.fecha_salida IS NULL
+     LEFT JOIN (
+       SELECT id_titular, COUNT(id_residente)::integer AS residentes
+       FROM residentes WHERE activo = true
+       GROUP BY id_titular
+     ) sub ON sub.id_titular = t.id_titular
+     ORDER BY d.numero_departamento ASC")
+  })  
   # Carga trabajadores activos en el selector de despedir
   observe({
     req(credentials()$info$rol == "admin")
@@ -868,6 +1019,56 @@ observeEvent(input$actualizar_enc, {
   ))
   
   showNotification("Estado actualizado exitosamente", type = "message")
+})
+
+# Carga deptos y titulares en los selectores de departamentos
+observe({
+  req(credentials()$info$rol == "admin")
+  req(!is.null(input$dep_tipo))
+  
+  deptos <- dbGetQuery(con, "SELECT id_departamento, numero_departamento FROM departamentos ORDER BY numero_departamento")
+  updateSelectInput(session, "dep_depto", 
+                    choices = setNames(deptos$id_departamento, deptos$numero_departamento))
+  
+  titulares <- dbGetQuery(con, "SELECT id_titular, nombre || ' ' || apellido AS nombre FROM titular WHERE fecha_salida IS NULL")
+  updateSelectInput(session, "dep_titular",
+                    choices = setNames(titulares$id_titular, titulares$nombre))
+})
+
+
+# Carga propietarios y titulares en selectores de desvincular
+
+observe({
+  req(credentials()$info$rol == "admin")
+  req(!is.null(input$desv_tipo))
+  
+  propietarios <- dbGetQuery(con, 
+                             "SELECT DISTINCT p.id_propietario, p.nombre || ' ' || p.apellido AS nombre 
+     FROM propietarios p
+     INNER JOIN historial_propietario hp ON hp.id_propietario = p.id_propietario
+     AND hp.fecha_fin IS NULL")
+  updateSelectInput(session, "desv_propietario",
+                    choices = setNames(propietarios$id_propietario, propietarios$nombre))
+  
+  titulares <- dbGetQuery(con,
+                          "SELECT id_titular, nombre || ' ' || apellido AS nombre 
+     FROM titular WHERE fecha_salida IS NULL")
+  updateSelectInput(session, "desv_titular",
+                    choices = setNames(titulares$id_titular, titulares$nombre))
+})
+
+observe({
+  req(credentials()$info$rol == "admin")
+  req(!is.null(input$desv_propietario))
+  req(nchar(as.character(input$desv_propietario)) > 0)
+  
+  deptos <- dbGetQuery(con, paste0(
+    "SELECT d.id_departamento, d.numero_departamento 
+     FROM departamentos d
+     INNER JOIN historial_propietario hp ON hp.id_departamento = d.id_departamento
+     WHERE hp.id_propietario = ", input$desv_propietario, " AND hp.fecha_fin IS NULL"))
+  updateSelectInput(session, "desv_depto_prop",
+                    choices = setNames(deptos$id_departamento, deptos$numero_departamento))
 })
 
 }
