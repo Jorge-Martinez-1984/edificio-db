@@ -17,8 +17,6 @@ library(shinyjs)
 library(sodium)
 
 # --- CONEXIÓN BASE DE DATOS ---
-# Conexión local a PostgreSQL.
-# En producción usar variables de entorno para la contraseña.
 con <- dbConnect(RPostgres::Postgres(),
                  dbname   = "edificio_db",
                  host     = "localhost",
@@ -28,29 +26,24 @@ con <- dbConnect(RPostgres::Postgres(),
 )
 
 # --- USUARIOS Y ROLES ---
-# Se cargan desde la tabla USUARIOS en PostgreSQL.
-# Solo usuarios con activo = true pueden iniciar sesión.
 usuarios <- dbGetQuery(con,
                        "SELECT username AS user, password_hash, rol, id_trabajador
    FROM usuarios WHERE activo = true")
 
 # ============================================
-# INTERFAZ DE USUARIO (UI)
+# UI
 # ============================================
 ui <- dashboardPage(
   
   dashboardHeader(
-    title = "Gestión Edificio",
+    title = "Gestor de Comunidades",
     tags$li(class = "dropdown",
             actionButton("logout_btn", "Cerrar Sesión",
                          style = "margin-top: 8px; margin-right: 10px;")
     )
   ),
   
-  dashboardSidebar(
-    id = "tabs",
-    uiOutput("menu_sidebar")
-  ),
+  dashboardSidebar(id = "tabs", uiOutput("menu_sidebar")),
   
   dashboardBody(
     useShinyjs(),
@@ -62,13 +55,13 @@ ui <- dashboardPage(
       .nav-tabs li:nth-child(3) a { background-color: #337ab7; color: white; }
       .nav-tabs li.active a { font-size: 16px; font-weight: bold; }
     ")),
-    shinyauthr::loginUI("login", title = "Bienvenido a Gestión Edificio"),
+    shinyauthr::loginUI("login", title = "Bienvenido a Gestor de Comunidades"),
     uiOutput("contenido")
   )
 )
 
 # ============================================
-# SERVIDOR (SERVER)
+# SERVER
 # ============================================
 server <- function(input, output, session) {
   
@@ -83,7 +76,6 @@ server <- function(input, output, session) {
     sodium_hashed = TRUE
   )
   
-  # Redirige a la pestaña inicial según rol
   observe({
     req(credentials()$user_auth)
     if (credentials()$info$rol == "conserje") {
@@ -93,21 +85,20 @@ server <- function(input, output, session) {
     }
   })
   
-  # Cierra sesión
   observeEvent(input$logout_btn, { session$reload() })
   
   # ==========================================
-  # MENÚ LATERAL Y CONTENIDO SEGÚN ROL
+  # MENÚ Y CONTENIDO
   # ==========================================
   output$menu_sidebar <- renderUI({
     req(credentials()$user_auth)
     rol <- credentials()$info$rol
     if (rol == "conserje") {
       sidebarMenu(id = "tabs",
-                  menuItem("Registro",       tabName = "registro",       icon = icon("book")),
-                  menuItem("Encomiendas",    tabName = "encomiendas",    icon = icon("box")),
-                  menuItem("Mantención",     tabName = "mantencion",     icon = icon("wrench")),
-                  menuItem("Departamentos",  tabName = "departamentos",  icon = icon("building"))
+                  menuItem("Registro",      tabName = "registro",      icon = icon("book")),
+                  menuItem("Encomiendas",   tabName = "encomiendas",   icon = icon("box")),
+                  menuItem("Mantención",    tabName = "mantencion",    icon = icon("wrench")),
+                  menuItem("Departamentos", tabName = "departamentos", icon = icon("building"))
       )
     } else {
       sidebarMenu(id = "tabs",
@@ -219,10 +210,10 @@ server <- function(input, output, session) {
         tabPanel("Ingresos",
                  fluidRow(
                    box(width = 4, title = "Registrar Ingreso",
-                       selectInput("ing_tipo",  "Tipo:",          choices = c()),
-                       selectInput("ing_depto", "Departamento:",  choices = c("N/A")),
-                       numericInput("ing_monto","Monto ($):",     value = 0, min = 0),
-                       dateInput("ing_fecha",   "Fecha:",         value = Sys.Date()),
+                       selectInput("ing_tipo",  "Tipo:",         choices = c()),
+                       selectInput("ing_depto", "Departamento:", choices = c("N/A")),
+                       numericInput("ing_monto","Monto ($):",    value = 0, min = 0),
+                       dateInput("ing_fecha",   "Fecha:",        value = Sys.Date()),
                        actionButton("guardar_ingreso", "Registrar", class = "btn-primary")
                    ),
                    box(width = 8, title = "Historial de Ingresos",
@@ -235,9 +226,9 @@ server <- function(input, output, session) {
         tabPanel("Egresos",
                  fluidRow(
                    box(width = 4, title = "Registrar Egreso",
-                       selectInput("eg_tipo",  "Tipo:",   choices = c()),
+                       selectInput("eg_tipo",  "Tipo:",    choices = c()),
                        numericInput("eg_monto","Monto ($):", value = 0, min = 0),
-                       dateInput("eg_fecha",   "Fecha:",  value = Sys.Date()),
+                       dateInput("eg_fecha",   "Fecha:",   value = Sys.Date()),
                        actionButton("guardar_egreso", "Registrar", class = "btn-primary")
                    ),
                    box(width = 8, title = "Historial de Egresos",
@@ -268,7 +259,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # Carga selectores de Finanzas
+  # Selectores Finanzas
   observe({
     req(credentials()$info$rol == "admin")
     req(!is.null(input$ing_tipo))
@@ -293,8 +284,7 @@ server <- function(input, output, session) {
   
   output$tabla_ingresos <- renderTable({
     input$guardar_ingreso
-    periodo <- input$filtro_periodo_ing
-    filtro <- switch(periodo,
+    filtro <- switch(input$filtro_periodo_ing,
                      "Mes actual" = "AND DATE_TRUNC('month', fecha) = DATE_TRUNC('month', CURRENT_DATE)",
                      "Semestre"   = "AND fecha >= CURRENT_DATE - INTERVAL '6 months'",
                      "AND fecha >= CURRENT_DATE - INTERVAL '1 year'")
@@ -311,8 +301,7 @@ server <- function(input, output, session) {
   output$tabla_egresos <- renderTable({
     input$guardar_egreso
     input$guardar_sueldo
-    periodo <- input$filtro_periodo_eg
-    filtro <- switch(periodo,
+    filtro <- switch(input$filtro_periodo_eg,
                      "Mes actual" = "AND DATE_TRUNC('month', fecha) = DATE_TRUNC('month', CURRENT_DATE)",
                      "Semestre"   = "AND fecha >= CURRENT_DATE - INTERVAL '6 months'",
                      "AND fecha >= CURRENT_DATE - INTERVAL '1 year'")
@@ -343,18 +332,26 @@ server <- function(input, output, session) {
   observeEvent(input$guardar_ingreso, {
     req(input$ing_monto > 0)
     id_depto <- if (input$ing_depto == 0) "NULL" else input$ing_depto
-    dbExecute(con, paste0(
-      "INSERT INTO INGRESOS (id_tipo_ingreso, id_departamento, monto, fecha) VALUES (",
-      input$ing_tipo, ", ", id_depto, ", ", input$ing_monto, ", '", input$ing_fecha, "')"))
-    showNotification("Ingreso registrado exitosamente", type = "message")
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO INGRESOS (id_tipo_ingreso, id_departamento, monto, fecha) VALUES (",
+        input$ing_tipo, ", ", id_depto, ", ", input$ing_monto, ", '", input$ing_fecha, "')"))
+      showNotification("Ingreso registrado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al registrar ingreso:", conditionMessage(e)), type = "error")
+    })
   })
   
   observeEvent(input$guardar_egreso, {
     req(input$eg_monto > 0)
-    dbExecute(con, paste0(
-      "INSERT INTO EGRESOS (id_tipo_egreso, monto, fecha) VALUES (",
-      input$eg_tipo, ", ", input$eg_monto, ", '", input$eg_fecha, "')"))
-    showNotification("Egreso registrado exitosamente", type = "message")
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO EGRESOS (id_tipo_egreso, monto, fecha) VALUES (",
+        input$eg_tipo, ", ", input$eg_monto, ", '", input$eg_fecha, "')"))
+      showNotification("Egreso registrado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al registrar egreso:", conditionMessage(e)), type = "error")
+    })
   })
   
   observeEvent(input$guardar_sueldo, {
@@ -366,10 +363,14 @@ server <- function(input, output, session) {
                          "-01")
     id_sueldo <- dbGetQuery(con,
                             "SELECT id_tipo_egreso FROM tipo_egreso WHERE nombre = 'Sueldo'")$id_tipo_egreso
-    dbExecute(con, paste0(
-      "INSERT INTO EGRESOS (id_tipo_egreso, monto, fecha, id_trabajador) VALUES (",
-      id_sueldo, ", ", input$sueldo_monto, ", '", fecha_pago, "', ", input$sueldo_trabajador, ")"))
-    showNotification("Sueldo registrado exitosamente", type = "message")
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO EGRESOS (id_tipo_egreso, monto, fecha, id_trabajador) VALUES (",
+        id_sueldo, ", ", input$sueldo_monto, ", '", fecha_pago, "', ", input$sueldo_trabajador, ")"))
+      showNotification("Sueldo registrado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al registrar sueldo:", conditionMessage(e)), type = "error")
+    })
   })
   
   # ==========================================
@@ -459,15 +460,14 @@ server <- function(input, output, session) {
                    DTOutput("historial_encomiendas")
       )),
       fluidRow(box(width = 12, title = "Registrar Encomienda",
-                   selectInput("enc_depto",   "Departamento:",     choices = c()),
-                   textInput("enc_empresa",   "Empresa de despacho:"),
+                   selectInput("enc_depto",  "Departamento:",      choices = c()),
+                   textInput("enc_empresa",  "Empresa de despacho:"),
                    actionButton("guardar_encomienda", "Registrar", class = "btn-primary")
       )),
       fluidRow(box(width = 12, title = "Actualizar Estado",
-                   selectInput("enc_id",          "Encomienda:",   choices = c()),
-                   selectInput("enc_estado_nuevo", "Nuevo estado:",
-                               choices = c("En Bodega", "Entregado")),
-                   actionButton("actualizar_enc", "Actualizar", class = "btn-warning")
+                   selectInput("enc_id",           "Encomienda:",   choices = c()),
+                   selectInput("enc_estado_nuevo", "Nuevo estado:", choices = c("En Bodega", "Entregado")),
+                   actionButton("actualizar_enc",  "Actualizar",    class = "btn-warning")
       )),
       fluidRow(box(width = 12, title = "Encomiendas Pendientes",
                    DTOutput("encomiendas_pendientes")))
@@ -503,23 +503,31 @@ server <- function(input, output, session) {
   observeEvent(input$guardar_encomienda, {
     req(input$enc_empresa)
     id_trabajador <- credentials()$info$id_trabajador
-    dbExecute(con, paste0(
-      "INSERT INTO ENCOMIENDA (id_departamento, empresa_despacho) VALUES (",
-      input$enc_depto, ", '", input$enc_empresa, "')"))
-    id_enc <- dbGetQuery(con, "SELECT MAX(id_encomienda) AS id FROM encomienda")$id
-    dbExecute(con, paste0(
-      "INSERT INTO HISTORIAL_ENCOMIENDA (id_encomienda, id_trabajador, estado, fecha_hora) VALUES (",
-      id_enc, ", ", id_trabajador, ", 'Recibido', NOW())"))
-    showNotification("Encomienda registrada exitosamente", type = "message")
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO ENCOMIENDA (id_departamento, empresa_despacho) VALUES (",
+        input$enc_depto, ", '", input$enc_empresa, "')"))
+      id_enc <- dbGetQuery(con, "SELECT MAX(id_encomienda) AS id FROM encomienda")$id
+      dbExecute(con, paste0(
+        "INSERT INTO HISTORIAL_ENCOMIENDA (id_encomienda, id_trabajador, estado, fecha_hora) VALUES (",
+        id_enc, ", ", id_trabajador, ", 'Recibido', NOW())"))
+      showNotification("Encomienda registrada exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al registrar encomienda:", conditionMessage(e)), type = "error")
+    })
   })
   
   observeEvent(input$actualizar_enc, {
     req(input$enc_id)
     id_trabajador <- credentials()$info$id_trabajador
-    dbExecute(con, paste0(
-      "INSERT INTO HISTORIAL_ENCOMIENDA (id_encomienda, id_trabajador, estado, fecha_hora) VALUES (",
-      input$enc_id, ", ", id_trabajador, ", '", input$enc_estado_nuevo, "', NOW())"))
-    showNotification("Estado actualizado exitosamente", type = "message")
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO HISTORIAL_ENCOMIENDA (id_encomienda, id_trabajador, estado, fecha_hora) VALUES (",
+        input$enc_id, ", ", id_trabajador, ", '", input$enc_estado_nuevo, "', NOW())"))
+      showNotification("Estado actualizado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al actualizar estado:", conditionMessage(e)), type = "error")
+    })
   })
   
   output$encomiendas_pendientes <- renderDT({
@@ -576,10 +584,14 @@ server <- function(input, output, session) {
   observeEvent(input$guardar_novedad, {
     req(input$novedad_texto)
     id_trabajador <- credentials()$info$id_trabajador
-    dbExecute(con, paste0(
-      "INSERT INTO REGISTRO (ID_trabajador, registro, fecha) VALUES (",
-      id_trabajador, ", '", input$novedad_texto, "', NOW())"))
-    showNotification("Novedad guardada exitosamente", type = "message")
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO REGISTRO (ID_trabajador, registro, fecha) VALUES (",
+        id_trabajador, ", '", gsub("'", "''", input$novedad_texto), "', NOW())"))
+      showNotification("Novedad guardada exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al guardar novedad:", conditionMessage(e)), type = "error")
+    })
   })
   
   output$tabla_novedades <- renderTable({
@@ -627,8 +639,8 @@ server <- function(input, output, session) {
                        textInput("trab_nombre",   "Nombre:"),
                        textInput("trab_apellido", "Apellido:"),
                        textInput("trab_cargo",    "Cargo:"),
-                       textInput("trab_celular",  "Celular:"),
-                       textInput("trab_rut",      "RUT:"),
+                       textInput("trab_celular",  "Celular (9 dígitos):"),
+                       textInput("trab_rut",      "RUT (ej: 12345678-9):"),
                        textInput("trab_email",    "Email:"),
                        textInput("trab_direccion","Dirección:"),
                        numericInput("trab_sueldo","Sueldo base ($):", value = 0, min = 0),
@@ -647,7 +659,6 @@ server <- function(input, output, session) {
     )
   })
   
-  # Selectores de Usuarios
   observe({
     req(credentials()$info$rol == "admin")
     req(!is.null(input$nuevo_trabajador))
@@ -678,22 +689,29 @@ server <- function(input, output, session) {
   
   observeEvent(input$guardar_usuario, {
     req(input$nuevo_username, input$nuevo_password)
-    hash <- sodium::password_store(input$nuevo_password)
-    dbExecute(con, paste0(
-      "INSERT INTO USUARIOS (username, password_hash, rol, id_trabajador) VALUES ('",
-      input$nuevo_username, "', '", hash, "', '",
-      input$nuevo_rol, "', ", input$nuevo_trabajador, ")"))
-    showNotification("Usuario creado exitosamente", type = "message")
+    tryCatch({
+      hash <- sodium::password_store(input$nuevo_password)
+      dbExecute(con, paste0(
+        "INSERT INTO USUARIOS (username, password_hash, rol, id_trabajador) VALUES ('",
+        input$nuevo_username, "', '", hash, "', '",
+        input$nuevo_rol, "', ", input$nuevo_trabajador, ")"))
+      showNotification("Usuario creado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error: usuario puede ya existir o datos inválidos."), type = "error")
+    })
   })
   
   observeEvent(input$desactivar_usuario, {
-    dbExecute(con, paste0(
-      "UPDATE USUARIOS SET activo = false WHERE username = '",
-      input$usuario_desactivar, "'"))
-    showNotification("Usuario desactivado", type = "warning")
+    tryCatch({
+      dbExecute(con, paste0(
+        "UPDATE USUARIOS SET activo = false WHERE username = '",
+        input$usuario_desactivar, "'"))
+      showNotification("Usuario desactivado", type = "warning")
+    }, error = function(e) {
+      showNotification(paste("Error al desactivar usuario:", conditionMessage(e)), type = "error")
+    })
   })
   
-  # Selectores de Trabajadores
   observe({
     req(credentials()$info$rol == "admin")
     req(!is.null(input$trab_despedir))
@@ -713,28 +731,41 @@ server <- function(input, output, session) {
   
   observeEvent(input$guardar_trabajador, {
     req(input$trab_nombre, input$trab_apellido, input$trab_cargo)
-    dbExecute(con, paste0(
-      "INSERT INTO TRABAJADORES (nombre, apellido, cargo, celular, activo) VALUES ('",
-      input$trab_nombre, "', '", input$trab_apellido, "', '",
-      input$trab_cargo,  "', '", input$trab_celular,  "', true)"))
-    id_trab <- dbGetQuery(con, "SELECT MAX(id_trabajador) AS id FROM trabajadores")$id
-    dbExecute(con, paste0(
-      "INSERT INTO TRABAJADORES_CONFIDENCIAL
-       (id_trabajador, sueldo, email, rut, fecha_contratacion, direccion) VALUES (",
-      id_trab, ", ", input$trab_sueldo, ", '",
-      input$trab_email, "', '", input$trab_rut, "', '",
-      input$trab_fecha_contrato, "', '", input$trab_direccion, "')"))
-    showNotification("Trabajador contratado exitosamente", type = "message")
+    # Validación celular
+    if (nchar(input$trab_celular) != 9) {
+      showNotification("El celular debe tener exactamente 9 dígitos.", type = "error")
+      return()
+    }
+    tryCatch({
+      dbExecute(con, paste0(
+        "INSERT INTO TRABAJADORES (nombre, apellido, cargo, celular, activo) VALUES ('",
+        input$trab_nombre, "', '", input$trab_apellido, "', '",
+        input$trab_cargo,  "', '", input$trab_celular,  "', true)"))
+      id_trab <- dbGetQuery(con, "SELECT MAX(id_trabajador) AS id FROM trabajadores")$id
+      dbExecute(con, paste0(
+        "INSERT INTO TRABAJADORES_CONFIDENCIAL
+         (id_trabajador, sueldo, email, rut, fecha_contratacion, direccion) VALUES (",
+        id_trab, ", ", input$trab_sueldo, ", '",
+        input$trab_email, "', '", input$trab_rut, "', '",
+        input$trab_fecha_contrato, "', '", input$trab_direccion, "')"))
+      showNotification("Trabajador contratado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al contratar trabajador:", conditionMessage(e)), type = "error")
+    })
   })
   
   observeEvent(input$despedir_trabajador, {
     req(input$trab_despedir)
-    dbExecute(con, paste0(
-      "UPDATE TRABAJADORES SET activo = false WHERE id_trabajador = ", input$trab_despedir))
-    dbExecute(con, paste0(
-      "UPDATE TRABAJADORES_CONFIDENCIAL SET fecha_desvinculacion = NOW()
-       WHERE id_trabajador = ", input$trab_despedir))
-    showNotification("Trabajador desvinculado", type = "warning")
+    tryCatch({
+      dbExecute(con, paste0(
+        "UPDATE TRABAJADORES SET activo = false WHERE id_trabajador = ", input$trab_despedir))
+      dbExecute(con, paste0(
+        "UPDATE TRABAJADORES_CONFIDENCIAL SET fecha_desvinculacion = NOW()
+         WHERE id_trabajador = ", input$trab_despedir))
+      showNotification("Trabajador desvinculado", type = "warning")
+    }, error = function(e) {
+      showNotification(paste("Error al desvincular trabajador:", conditionMessage(e)), type = "error")
+    })
   })
   
   # ==========================================
@@ -755,26 +786,22 @@ server <- function(input, output, session) {
                                             choices = c("Propietario", "Arrendatario", "Residente")),
                                 textInput("dep_nombre",   "Nombre:"),
                                 textInput("dep_apellido", "Apellido:"),
-                                textInput("dep_rut",      "RUT:"),
-                                textInput("dep_celular",  "Celular:"),
+                                textInput("dep_rut",      "RUT (ej: 12345678-9):"),
+                                textInput("dep_celular",  "Celular (9 dígitos):"),
                                 textInput("dep_email",    "Email:"),
-                                # Depto: para Propietario y Arrendatario
                                 conditionalPanel(
                                   condition = "input.dep_tipo != 'Residente'",
                                   selectInput("dep_depto", "Departamento:", choices = c())
                                 ),
-                                # Estacionamiento y bodega: solo para Propietario
                                 conditionalPanel(
                                   condition = "input.dep_tipo == 'Propietario'",
                                   textInput("dep_estacionamiento", "N° Estacionamiento (opcional):"),
-                                  textInput("dep_bodega",          "N° Bodega (opcional):")
+                                  textInput("dep_bodega",           "N° Bodega (opcional):")
                                 ),
-                                # Fecha ingreso: solo para Arrendatario
                                 conditionalPanel(
                                   condition = "input.dep_tipo == 'Arrendatario'",
                                   dateInput("dep_fecha_ingreso", "Fecha ingreso:", value = Sys.Date())
                                 ),
-                                # Titular: solo para Residente
                                 conditionalPanel(
                                   condition = "input.dep_tipo == 'Residente'",
                                   selectInput("dep_titular", "Titular:", choices = c())
@@ -787,13 +814,13 @@ server <- function(input, output, session) {
                                 selectInput("desv_tipo", "Tipo:", choices = c("Propietario", "Arrendatario")),
                                 conditionalPanel(
                                   condition = "input.desv_tipo == 'Propietario'",
-                                  selectInput("desv_propietario",  "Propietario:",  choices = c()),
-                                  selectInput("desv_depto_prop",   "Departamento:", choices = c())
+                                  selectInput("desv_propietario", "Propietario:",  choices = c()),
+                                  selectInput("desv_depto_prop",  "Departamento:", choices = c())
                                 ),
                                 conditionalPanel(
                                   condition = "input.desv_tipo == 'Arrendatario'",
-                                  selectInput("desv_titular",      "Arrendatario:", choices = c()),
-                                  dateInput("desv_fecha_salida",   "Fecha de salida:", value = Sys.Date())
+                                  selectInput("desv_titular",    "Arrendatario:",   choices = c()),
+                                  dateInput("desv_fecha_salida", "Fecha de salida:", value = Sys.Date())
                                 ),
                                 actionButton("desv_guardar", "Desvincular", class = "btn-danger")
                    ))
@@ -803,15 +830,13 @@ server <- function(input, output, session) {
     }
   })
   
-  # Tabla principal de departamentos
   output$tabla_deptos <- renderTable({
     invalidateLater(5000, session)
     dbGetQuery(con,
                "SELECT d.numero_departamento AS depto,
        p.nombre || ' ' || p.apellido AS propietario,
        pc.celular AS contacto_propietario,
-       d.estacionamiento,
-       d.bodega,
+       d.estacionamiento, d.bodega,
        t.nombre || ' ' || t.apellido AS arrendatario,
        t.celular AS contacto_arrendatario,
        COALESCE(sub.residentes, 0) +
@@ -825,13 +850,11 @@ server <- function(input, output, session) {
          ON t.id_departamento = d.id_departamento AND t.fecha_salida IS NULL
        LEFT JOIN (
          SELECT id_titular, COUNT(id_residente)::integer AS residentes
-         FROM residentes WHERE activo = true
-         GROUP BY id_titular
+         FROM residentes WHERE activo = true GROUP BY id_titular
        ) sub ON sub.id_titular = t.id_titular
        ORDER BY d.numero_departamento ASC")
   })
   
-  # Selectores del formulario Registrar de departamentos
   observe({
     req(credentials()$info$rol == "admin")
     req(!is.null(input$dep_tipo))
@@ -846,7 +869,6 @@ server <- function(input, output, session) {
                       choices = setNames(titulares$id_titular, titulares$nombre))
   })
   
-  # Selectores del formulario Desvincular
   observe({
     req(credentials()$info$rol == "admin")
     req(!is.null(input$desv_tipo))
@@ -877,73 +899,74 @@ server <- function(input, output, session) {
                       choices = setNames(deptos$id_departamento, deptos$numero_departamento))
   })
   
-  # Guarda nuevo registro de departamento
   observeEvent(input$guardar_dep, {
     req(input$dep_nombre, input$dep_apellido, input$dep_rut)
-    
-    if (input$dep_tipo == "Propietario") {
-      # INSERT propietario
-      dbExecute(con, paste0(
-        "INSERT INTO PROPIETARIOS (nombre, apellido) VALUES ('",
-        input$dep_nombre, "', '", input$dep_apellido, "')"))
-      id_prop <- dbGetQuery(con,
-                            "SELECT MAX(id_propietario) AS id FROM propietarios")$id
-      dbExecute(con, paste0(
-        "INSERT INTO PROPIETARIOS_CONFIDENCIAL (id_propietario, rut, email, celular) VALUES (",
-        id_prop, ", '", input$dep_rut, "', '", input$dep_email, "', '", input$dep_celular, "')"))
-      # Vincula al depto y actualiza estacionamiento/bodega si se ingresaron
-      dbExecute(con, paste0(
-        "INSERT INTO HISTORIAL_PROPIETARIO (id_propietario, id_departamento, fecha_inicio) VALUES (",
-        id_prop, ", ", input$dep_depto, ", CURRENT_DATE)"))
-      if (nchar(input$dep_estacionamiento) > 0) {
-        dbExecute(con, paste0(
-          "UPDATE DEPARTAMENTOS SET estacionamiento = '", input$dep_estacionamiento,
-          "' WHERE id_departamento = ", input$dep_depto))
-      }
-      if (nchar(input$dep_bodega) > 0) {
-        dbExecute(con, paste0(
-          "UPDATE DEPARTAMENTOS SET bodega = '", input$dep_bodega,
-          "' WHERE id_departamento = ", input$dep_depto))
-      }
-      
-    } else if (input$dep_tipo == "Arrendatario") {
-      dbExecute(con, paste0(
-        "INSERT INTO TITULAR
-         (id_departamento, nombre, apellido, rut, celular, email, es_arrendatario, fecha_ingreso)
-         VALUES (", input$dep_depto, ", '", input$dep_nombre, "', '", input$dep_apellido, "', '",
-        input$dep_rut, "', '", input$dep_celular, "', '", input$dep_email, "', true, '",
-        input$dep_fecha_ingreso, "')"))
-      
-    } else if (input$dep_tipo == "Residente") {
-      dbExecute(con, paste0(
-        "INSERT INTO RESIDENTES (id_titular, nombre, apellido, rut, celular, activo) VALUES (",
-        input$dep_titular, ", '", input$dep_nombre, "', '", input$dep_apellido, "', '",
-        input$dep_rut, "', '", input$dep_celular, "', true)"))
+    # Validación celular para Propietario y Arrendatario
+    if (input$dep_tipo != "Residente" && nchar(input$dep_celular) != 9) {
+      showNotification("El celular debe tener exactamente 9 dígitos.", type = "error")
+      return()
     }
-    showNotification("Registro guardado exitosamente", type = "message")
+    tryCatch({
+      if (input$dep_tipo == "Propietario") {
+        dbExecute(con, paste0(
+          "INSERT INTO PROPIETARIOS (nombre, apellido) VALUES ('",
+          input$dep_nombre, "', '", input$dep_apellido, "')"))
+        id_prop <- dbGetQuery(con, "SELECT MAX(id_propietario) AS id FROM propietarios")$id
+        dbExecute(con, paste0(
+          "INSERT INTO PROPIETARIOS_CONFIDENCIAL (id_propietario, rut, email, celular) VALUES (",
+          id_prop, ", '", input$dep_rut, "', '", input$dep_email, "', '", input$dep_celular, "')"))
+        dbExecute(con, paste0(
+          "INSERT INTO HISTORIAL_PROPIETARIO (id_propietario, id_departamento, fecha_inicio) VALUES (",
+          id_prop, ", ", input$dep_depto, ", CURRENT_DATE)"))
+        if (nchar(input$dep_estacionamiento) > 0)
+          dbExecute(con, paste0("UPDATE DEPARTAMENTOS SET estacionamiento = '",
+                                input$dep_estacionamiento, "' WHERE id_departamento = ", input$dep_depto))
+        if (nchar(input$dep_bodega) > 0)
+          dbExecute(con, paste0("UPDATE DEPARTAMENTOS SET bodega = '",
+                                input$dep_bodega, "' WHERE id_departamento = ", input$dep_depto))
+        
+      } else if (input$dep_tipo == "Arrendatario") {
+        dbExecute(con, paste0(
+          "INSERT INTO TITULAR
+           (id_departamento, nombre, apellido, rut, celular, email, es_arrendatario, fecha_ingreso)
+           VALUES (", input$dep_depto, ", '", input$dep_nombre, "', '", input$dep_apellido, "', '",
+          input$dep_rut, "', '", input$dep_celular, "', '", input$dep_email, "', true, '",
+          input$dep_fecha_ingreso, "')"))
+        
+      } else if (input$dep_tipo == "Residente") {
+        dbExecute(con, paste0(
+          "INSERT INTO RESIDENTES (id_titular, nombre, apellido, rut, celular, activo) VALUES (",
+          input$dep_titular, ", '", input$dep_nombre, "', '", input$dep_apellido, "', '",
+          input$dep_rut, "', '", input$dep_celular, "', true)"))
+      }
+      showNotification("Registro guardado exitosamente", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error al guardar registro:", conditionMessage(e)), type = "error")
+    })
   })
   
-  # Ejecuta la desvinculación
   observeEvent(input$desv_guardar, {
-    if (input$desv_tipo == "Propietario") {
-      dbExecute(con, paste0(
-        "UPDATE HISTORIAL_PROPIETARIO SET fecha_fin = CURRENT_DATE
-         WHERE id_departamento = ", input$desv_depto_prop,
-        " AND id_propietario = ", input$desv_propietario,
-        " AND fecha_fin IS NULL"))
-      showNotification("Propietario desvinculado", type = "warning")
-      
-    } else if (input$desv_tipo == "Arrendatario") {
-      dbExecute(con, paste0(
-        "UPDATE TITULAR SET fecha_salida = '", input$desv_fecha_salida,
-        "' WHERE id_titular = ", input$desv_titular))
-      showNotification(
-        "Arrendatario desvinculado — residentes desactivados automáticamente",
-        type = "warning")
-    }
+    tryCatch({
+      if (input$desv_tipo == "Propietario") {
+        dbExecute(con, paste0(
+          "UPDATE HISTORIAL_PROPIETARIO SET fecha_fin = CURRENT_DATE
+           WHERE id_departamento = ", input$desv_depto_prop,
+          " AND id_propietario = ", input$desv_propietario,
+          " AND fecha_fin IS NULL"))
+        showNotification("Propietario desvinculado", type = "warning")
+      } else if (input$desv_tipo == "Arrendatario") {
+        dbExecute(con, paste0(
+          "UPDATE TITULAR SET fecha_salida = '", input$desv_fecha_salida,
+          "' WHERE id_titular = ", input$desv_titular))
+        showNotification(
+          "Arrendatario desvinculado — residentes desactivados automáticamente",
+          type = "warning")
+      }
+    }, error = function(e) {
+      showNotification(paste("Error al desvincular:", conditionMessage(e)), type = "error")
+    })
   })
   
 } # fin server
 
-# --- INICIAR APLICACIÓN ---
 shinyApp(ui = ui, server = server)
